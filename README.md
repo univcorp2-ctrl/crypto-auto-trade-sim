@@ -5,11 +5,46 @@
 実運用を急がず、次の順番で進めることを前提に設計しています。
 
 1. **バックテスト**: 手元のOHLCVまたはサンプルデータでロジック検証
-2. **ペーパートレード**: 取引所テストネットまたは発注なしのリアルタイム検証
-3. **小額実運用**: 最大損失、注文サイズ、停止条件を固定して運用
-4. **増額判断**: 十分な期間・十分な約定数で統計的に確認してから増額
+2. **日次モニタリング**: 毎日のリアルタイム価格とリターンを確認
+3. **ペーパートレード**: 取引所テストネットまたは発注なしのリアルタイム検証
+4. **小額実運用**: 最大損失、注文サイズ、停止条件を固定して運用
+5. **増額判断**: 十分な期間・十分な約定数で統計的に確認してから増額
 
 > 注意: これは投資助言ではありません。暗号資産は価格変動が大きく、元本を失う可能性があります。実運用前に必ずご自身で検証してください。
+
+## 現在の取引所設定
+
+初期設定は次の通りです。
+
+| 用途 | 設定 |
+|---|---|
+| 毎日の価格・リターン取得 | Binance Spot public market data |
+| 実運用前の発注検証 | Binance Spot Testnet |
+| 本番候補 | Binance Spot |
+
+安全のため、発注関連の初期値は以下です。
+
+```text
+TRADING_DRY_RUN=true
+ENABLE_LIVE_TRADING=false
+EXECUTION_PROFILE=binance-spot-testnet
+```
+
+詳細は `docs/exchange-setup.md` を参照してください。
+
+## 毎日の結果レポート
+
+GitHub Actionsで毎日 **09:10 JST** に日次リターンレポートを作成します。
+
+対象銘柄の初期値:
+
+```text
+BTCUSDT,ETHUSDT,SOLUSDT
+```
+
+結果はGitHub Issue `Daily Crypto Return Report` に投稿されます。Slack/Discordへ送りたい場合は、GitHub Actions Secretに `DAILY_REPORT_WEBHOOK_URL` を設定してください。
+
+詳細は `docs/daily-report-automation.md` を参照してください。
 
 ## 売買ロジック
 
@@ -53,7 +88,7 @@
 - 手数料とスリッページを保守的に入れてもプラス
 - 最大ドローダウンが許容範囲内
 - 取引回数が十分にある
-- ペーパートレードで 30〜90日程度、バックテストと極端に乖離しない
+- ペーパートレードで30〜90日程度、バックテストと極端に乖離しない
 - API障害、注文失敗、通信断、急変時の停止条件を実装済み
 
 ## セットアップ
@@ -67,6 +102,12 @@ npm run dev
 
 ```bash
 npm test
+```
+
+日次レポートを手元で実行:
+
+```bash
+npm run daily:report
 ```
 
 ビルド:
@@ -112,7 +153,7 @@ PositionStore + AuditLog
 
 ## 今後の拡張候補
 
-- CoinGecko/Binance/CCXT からのOHLCV取得
+- 複数取引所Adapter
 - walk-forward analysis
 - パラメータ最適化と過学習チェック
 - 複数銘柄ポートフォリオ
