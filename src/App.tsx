@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import LiveReturnMonitor from './components/LiveReturnMonitor';
 import { runBacktest } from './lib/backtest';
 import { defaultParams, StrategyParams } from './lib/strategy';
 import { generateScenario, parseCandlesCsv, ScenarioName } from './lib/sampleData';
@@ -172,6 +173,8 @@ export default function App() {
           <em className={metrics.totalReturn >= 0 ? 'good' : 'bad'}>{formatPercent(metrics.totalReturn)}</em>
         </div>
       </section>
+
+      <LiveReturnMonitor />
 
       <section className="grid two">
         <div className="panel">
