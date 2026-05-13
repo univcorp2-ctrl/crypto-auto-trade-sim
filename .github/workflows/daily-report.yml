@@ -1,0 +1,51 @@
+name: Daily Crypto Return Report
+
+on:
+  schedule:
+    # 09:10 JST every day. GitHub cron uses UTC.
+    - cron: "10 0 * * *"
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Comma-separated symbols, e.g. BTCUSDT,ETHUSDT,SOLUSDT"
+        required: false
+        default: "BTCUSDT,ETHUSDT,SOLUSDT"
+      exchange_rest_base:
+        description: "Binance-compatible REST base URL"
+        required: false
+        default: "https://api.binance.com"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  daily-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate and publish daily report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SYMBOLS: ${{ github.event.inputs.symbols || vars.DAILY_REPORT_SYMBOLS || 'BTCUSDT,ETHUSDT,SOLUSDT' }}
+          EXCHANGE_PROFILE: ${{ vars.EXCHANGE_PROFILE || 'binance-spot' }}
+          EXCHANGE_REST_BASE: ${{ github.event.inputs.exchange_rest_base || vars.EXCHANGE_REST_BASE || 'https://api.binance.com' }}
+          DAILY_REPORT_WEBHOOK_URL: ${{ secrets.DAILY_REPORT_WEBHOOK_URL }}
+          DAILY_REPORT_CREATE_COMMENT: "true"
+        run: node scripts/daily-report.mjs
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-crypto-return-report
+          path: reports/latest-daily-return.md
+          if-no-files-found: error
