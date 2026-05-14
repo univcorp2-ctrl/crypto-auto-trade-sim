@@ -1,0 +1,56 @@
+name: Portfolio Performance Tracker
+
+on:
+  schedule:
+    # 09:20 JST every day. GitHub cron uses UTC.
+    - cron: "20 0 * * *"
+  workflow_dispatch:
+    inputs:
+      reset_state:
+        description: "Reset the simulated purchase state and start a new 1,000,000 JPY portfolio from current prices"
+        required: false
+        default: "false"
+      initial_investment_jpy:
+        description: "Initial hypothetical investment amount in JPY"
+        required: false
+        default: "1000000"
+      symbols:
+        description: "Comma-separated symbols. Default uses config/portfolio.json"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  portfolio-performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate portfolio performance report
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PORTFOLIO_RESET_STATE: ${{ github.event.inputs.reset_state || 'false' }}
+          INITIAL_INVESTMENT_JPY: ${{ github.event.inputs.initial_investment_jpy || vars.INITIAL_INVESTMENT_JPY || '1000000' }}
+          PORTFOLIO_SYMBOLS: ${{ github.event.inputs.symbols || vars.PORTFOLIO_SYMBOLS || '' }}
+          EXCHANGE_REST_BASE: ${{ vars.EXCHANGE_REST_BASE || 'https://api.binance.com' }}
+          PERFORMANCE_WEBHOOK_URL: ${{ secrets.PERFORMANCE_WEBHOOK_URL }}
+          REPORT_TIME_ZONE: Asia/Tokyo
+        run: npm run portfolio:report
+
+      - name: Upload latest report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-portfolio-performance
+          path: reports/latest-portfolio-performance.md
+          if-no-files-found: error

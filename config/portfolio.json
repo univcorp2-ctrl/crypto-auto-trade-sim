@@ -1,0 +1,37 @@
+{
+  "portfolioName": "Hypothetical 1,000,000 JPY Crypto Portfolio",
+  "initialInvestmentJpy": 1000000,
+  "baseCurrency": "JPY",
+  "quoteCurrency": "USDT",
+  "exchange": {
+    "marketDataProfile": "binance-spot",
+    "restBaseUrl": "https://api.binance.com"
+  },
+  "fx": {
+    "provider": "frankfurter",
+    "base": "USD",
+    "quote": "JPY",
+    "fallbackUsdJpy": 157.8
+  },
+  "costs": {
+    "entryFeeBps": 10,
+    "entrySlippageBps": 5
+  },
+  "assets": [
+    {
+      "symbol": "BTCUSDT",
+      "label": "Bitcoin",
+      "allocationPct": 0.34
+    },
+    {
+      "symbol": "ETHUSDT",
+      "label": "Ethereum",
+      "allocationPct": 0.33
+    },
+    {
+      "symbol": "SOLUSDT",
+      "label": "Solana",
+      "allocationPct": 0.33
+    }
+  ]
+}
