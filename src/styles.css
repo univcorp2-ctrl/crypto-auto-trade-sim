@@ -14,9 +14,13 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background:
-    radial-gradient(circle at top left, rgba(61, 126, 255, 0.25), transparent 34rem),
-    radial-gradient(circle at top right, rgba(45, 212, 191, 0.18), transparent 28rem),
+    radial-gradient(circle at top left, rgba(37, 99, 235, 0.34), transparent 34rem),
+    radial-gradient(circle at top right, rgba(45, 212, 191, 0.2), transparent 28rem),
     #08111f;
+}
+
+a {
+  color: inherit;
 }
 
 button,
@@ -32,24 +36,41 @@ textarea {
   padding: 48px 0;
 }
 
+.center-state {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.state-panel {
+  max-width: 760px;
+}
+
+.state-panel h1 {
+  margin: 10px 0;
+  font-size: clamp(2rem, 5vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.06em;
+}
+
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.6fr);
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.72fr);
   gap: 24px;
   align-items: stretch;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .hero h1 {
   margin: 0;
-  max-width: 900px;
-  font-size: clamp(2rem, 6vw, 4.8rem);
-  line-height: 0.96;
+  max-width: 960px;
+  font-size: clamp(2.4rem, 6vw, 5.4rem);
+  line-height: 0.92;
   letter-spacing: -0.08em;
 }
 
 .hero p {
-  max-width: 760px;
+  max-width: 780px;
   color: #afbdd8;
   font-size: 1.06rem;
   line-height: 1.75;
@@ -57,14 +78,16 @@ textarea {
 
 .eyebrow {
   color: #67e8f9 !important;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-weight: 800;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .hero-card,
 .panel,
-.metric-card {
+.metric-card,
+.status-strip,
+.url-card {
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(15, 23, 42, 0.72);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
@@ -77,29 +100,107 @@ textarea {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  min-height: 260px;
+  min-height: 280px;
 }
 
 .hero-card span,
 .metric-card span,
-.field span {
+.url-card span {
   color: #98a8c8;
   font-size: 0.88rem;
 }
 
 .hero-card strong {
-  font-size: 2.4rem;
-  letter-spacing: -0.05em;
+  margin-top: 8px;
+  font-size: clamp(2.4rem, 5vw, 4.2rem);
+  letter-spacing: -0.07em;
 }
 
 .hero-card em {
+  margin-top: 8px;
   font-style: normal;
+  font-size: 1.2rem;
+  font-weight: 900;
+}
+
+.hero-card small {
+  margin-top: 12px;
+  color: #91a0bd;
+}
+
+.url-card {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px 16px;
+}
+
+.url-card a {
+  color: #b8f3ff;
   font-weight: 800;
+  word-break: break-all;
+}
+
+.status-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+  margin-bottom: 20px;
+}
+
+.status-strip div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.status-strip strong {
+  color: #e2e8f0;
+}
+
+.status-strip small {
+  color: #91a0bd;
+}
+
+.live-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 18px rgba(34, 197, 94, 0.9);
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.metric-card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metric-card strong {
+  font-size: 1.55rem;
+  letter-spacing: -0.04em;
+}
+
+.metric-card small {
+  color: #7483a3;
+  line-height: 1.45;
 }
 
 .grid.two {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1.15fr 0.85fr;
   gap: 20px;
 }
 
@@ -125,83 +226,6 @@ textarea {
   margin: 0;
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.field input,
-.field select,
-.field textarea {
-  width: 100%;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(8, 17, 31, 0.86);
-  color: #f8fafc;
-  border-radius: 16px;
-  padding: 12px 14px;
-  outline: none;
-}
-
-.field textarea {
-  resize: vertical;
-  min-height: 180px;
-}
-
-.field small {
-  color: #7483a3;
-  line-height: 1.45;
-}
-
-.param-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.param-grid.wide {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: #b6c1d8;
-  cursor: pointer;
-}
-
-.metrics-grid {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 14px;
-  margin: 20px 0;
-}
-
-.metric-card {
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.metric-card strong {
-  font-size: 1.55rem;
-  letter-spacing: -0.04em;
-}
-
-.good {
-  color: #22c55e;
-}
-
-.bad {
-  color: #fb7185;
-}
-
-.muted {
-  color: #91a0bd;
-}
-
 .chart {
   width: 100%;
   height: auto;
@@ -210,6 +234,10 @@ textarea {
 
 .chart rect {
   fill: rgba(8, 17, 31, 0.9);
+}
+
+.chart line {
+  stroke: rgba(148, 163, 184, 0.13);
 }
 
 .chart text {
@@ -225,6 +253,28 @@ textarea {
   border-radius: 20px;
 }
 
+.summary-panel dl {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+
+.summary-panel div {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.summary-panel dt {
+  color: #98a8c8;
+  font-size: 0.86rem;
+}
+
+.summary-panel dd {
+  margin: 6px 0 0;
+  color: #f8fafc;
+  font-weight: 800;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -232,7 +282,7 @@ textarea {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 900px;
 }
 
 th,
@@ -244,18 +294,20 @@ td {
 
 th {
   color: #9fb0d2;
-  font-weight: 700;
+  font-weight: 800;
 }
 
-.pill {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid rgba(103, 232, 249, 0.24);
-  color: #b8f3ff;
-  background: rgba(8, 145, 178, 0.12);
-  border-radius: 999px;
-  padding: 4px 9px;
-  font-size: 0.82rem;
+.subtle,
+.muted {
+  color: #91a0bd;
+}
+
+.good {
+  color: #22c55e;
+}
+
+.bad {
+  color: #fb7185;
 }
 
 .notes p,
@@ -264,27 +316,11 @@ th {
   line-height: 1.7;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1080px) {
   .hero,
   .grid.two,
+  .status-strip,
   .metrics-grid {
     grid-template-columns: 1fr;
-  }
-
-  .param-grid,
-  .param-grid.wide {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 640px) {
-  .param-grid,
-  .param-grid.wide {
-    grid-template-columns: 1fr;
-  }
-
-  .panel-heading {
-    align-items: flex-start;
-    flex-direction: column;
   }
 }
