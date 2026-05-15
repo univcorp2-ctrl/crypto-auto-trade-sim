@@ -1,106 +1,172 @@
-import { useMemo, useState } from 'react';
-import { runBacktest } from './lib/backtest';
-import { defaultParams, StrategyParams } from './lib/strategy';
-import { generateScenario, parseCandlesCsv, ScenarioName } from './lib/sampleData';
-import { formatCurrency, formatPercent, formatNumber } from './lib/format';
-import { Candle, EquityPoint, Trade } from './lib/types';
+import { useEffect, useMemo, useState } from 'react';
 
-const scenarioLabels: Record<ScenarioName, string> = {
-  trend: 'BTC風トレンド相場',
-  range: 'レンジ相場',
-  crashRecovery: '急落→回復相場'
+type Position = {
+  symbol: string;
+  label: string;
+  allocationPct: number;
+  quantity: number;
+  allocationJpy: number;
+  entryPriceUsdt: number;
+  effectiveEntryPriceUsdt: number;
+  currentPriceUsdt: number;
+  valueJpy: number;
+  pnlJpy: number;
+  returnPct: number;
 };
 
-const parameterHelp: Record<keyof StrategyParams, string> = {
-  initialCapital: '初期資金。バックテストの開始残高です。',
-  fastEma: '短期トレンドを見るEMA期間。小さいほど反応が速くなります。',
-  slowEma: '長期トレンドを見るEMA期間。大きいほど騙しを減らします。',
-  rsiPeriod: 'RSIの計算期間。',
-  rsiEntryMin: 'エントリー時のRSI下限。弱すぎる反発を避けます。',
-  rsiEntryMax: 'エントリー時のRSI上限。買われすぎの飛び乗りを避けます。',
-  atrPeriod: 'ATRの計算期間。ストップ幅と利確幅に使います。',
-  atrStopMultiplier: '初期ストップ幅。ATRにこの倍率を掛けます。',
-  takeProfitAtr: '利確ライン。エントリー価格からATR倍率分だけ上に置きます。',
-  trailingAtr: 'トレーリングストップ幅。高値更新時に切り上げます。',
-  riskPerTrade: '1トレードで失ってよい最大割合。例: 0.01 = 1%。',
-  maxPositionPct: '口座残高に対する最大建玉割合。例: 0.35 = 35%。',
-  minTrendPct: 'EMA差の最低条件。横ばいの騙しを減らします。',
-  feeBps: '往復ではなく片道の手数料bps。10bps = 0.1%。',
-  slippageBps: '成行・急変時の保守的な滑りbps。',
-  maxDrawdownStop: 'このドローダウンを超えたら新規エントリーを止めます。'
+type HistoryPoint = {
+  date: string;
+  valueJpy: number;
+  returnPct: number;
 };
 
-function updateNumberParam(params: StrategyParams, key: keyof StrategyParams, value: string): StrategyParams {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return params;
-  return { ...params, [key]: parsed };
+type DashboardData = {
+  generatedAt: string;
+  timeZone: string;
+  publicDashboardUrl: string;
+  schedule: {
+    label: string;
+    cronUtc: string;
+  };
+  source: {
+    exchange: string;
+    restBaseUrl: string;
+    fxProvider: string;
+    quoteCurrency: string;
+    baseCurrency: string;
+  };
+  portfolio: {
+    name: string;
+    startedAt: string;
+    initialInvestmentJpy: number;
+    entryUsdJpy: number;
+    currentUsdJpy: number;
+    entryFeeBps: number;
+    entrySlippageBps: number;
+    currentValueJpy: number;
+    pnlJpy: number;
+    totalReturnPct: number;
+    todayReturnPct: number | null;
+    previousCloseReturnPct: number | null;
+    sevenDayReturnPct: number | null;
+    thirtyDayReturnPct: number | null;
+    positions: Position[];
+    history: HistoryPoint[];
+  };
+};
+
+type LoadState =
+  | { status: 'loading'; data: null; error: null }
+  | { status: 'ready'; data: DashboardData; error: null }
+  | { status: 'error'; data: null; error: string };
+
+const dataUrl = `${import.meta.env.BASE_URL}data/performance.json`;
+
+function formatJpy(value: number): string {
+  return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(value);
 }
 
-function MetricCard({ label, value, accent }: { label: string; value: string; accent?: 'good' | 'bad' }) {
+function formatSignedJpy(value: number): string {
+  return `${value >= 0 ? '+' : '-'}${formatJpy(Math.abs(value))}`;
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: value >= 100 ? 2 : 6 }).format(value);
+}
+
+function formatPct(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '—';
+  return new Intl.NumberFormat('ja-JP', { style: 'percent', maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(value);
+}
+
+function formatDateTime(value: string): string {
+  return new Date(value).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+}
+
+function tone(value: number | null): 'good' | 'bad' | '' {
+  if (value === null || !Number.isFinite(value)) return '';
+  return value >= 0 ? 'good' : 'bad';
+}
+
+function MetricCard({ label, value, accent, note }: { label: string; value: string; accent?: 'good' | 'bad' | ''; note?: string }) {
   return (
-    <div className="metric-card">
+    <article className="metric-card">
       <span>{label}</span>
-      <strong className={accent === 'good' ? 'good' : accent === 'bad' ? 'bad' : ''}>{value}</strong>
-    </div>
+      <strong className={accent || ''}>{value}</strong>
+      {note ? <small>{note}</small> : null}
+    </article>
   );
 }
 
-function EquityChart({ points }: { points: EquityPoint[] }) {
-  if (points.length < 2) return <div className="empty-chart">十分なデータがありません。</div>;
+function Sparkline({ points }: { points: HistoryPoint[] }) {
+  if (points.length < 2) {
+    return <div className="empty-chart">履歴データは次回更新から増えていきます。</div>;
+  }
 
   const width = 920;
-  const height = 280;
+  const height = 260;
   const padding = 24;
-  const values = points.map((p) => p.equity);
+  const values = points.map((point) => point.valueJpy);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = Math.max(max - min, 1);
-
   const line = points
-    .map((p, index) => {
+    .map((point, index) => {
       const x = padding + (index / (points.length - 1)) * (width - padding * 2);
-      const y = height - padding - ((p.equity - min) / span) * (height - padding * 2);
+      const y = height - padding - ((point.valueJpy - min) / span) * (height - padding * 2);
       return `${x.toFixed(2)},${y.toFixed(2)}`;
     })
     .join(' ');
 
   return (
-    <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Equity curve">
-      <rect x="0" y="0" width={width} height={height} rx="20" />
-      <polyline points={line} fill="none" stroke="currentColor" strokeWidth="3" />
-      <text x="24" y="36">{formatCurrency(max)}</text>
-      <text x="24" y={height - 16}>{formatCurrency(min)}</text>
+    <svg className="chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Portfolio value history">
+      <defs>
+        <linearGradient id="equity-gradient" x1="0" x2="1">
+          <stop offset="0" stopColor="#22d3ee" />
+          <stop offset="1" stopColor="#34d399" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width={width} height={height} rx="24" />
+      {[0, 1, 2, 3].map((row) => (
+        <line key={row} x1="24" x2="896" y1={48 + row * 46} y2={48 + row * 46} />
+      ))}
+      <polyline points={line} fill="none" stroke="url(#equity-gradient)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+      <text x="28" y="36">{formatJpy(max)}</text>
+      <text x="28" y={height - 14}>{formatJpy(min)}</text>
     </svg>
   );
 }
 
-function TradeTable({ trades }: { trades: Trade[] }) {
-  if (trades.length === 0) return <p className="muted">まだトレードは発生していません。</p>;
-
+function PositionTable({ positions }: { positions: Position[] }) {
   return (
     <div className="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>#</th>
+            <th>Asset</th>
+            <th>Allocation</th>
+            <th>Quantity</th>
             <th>Entry</th>
-            <th>Exit</th>
-            <th>理由</th>
-            <th>数量</th>
-            <th>損益</th>
-            <th>損益率</th>
+            <th>Current</th>
+            <th>Value</th>
+            <th>P/L</th>
+            <th>Return</th>
           </tr>
         </thead>
         <tbody>
-          {trades.slice(-20).reverse().map((trade, index) => (
-            <tr key={`${trade.entryTime}-${trade.exitTime}-${index}`}>
-              <td>{trades.length - index}</td>
-              <td>{new Date(trade.entryTime).toLocaleDateString()}</td>
-              <td>{new Date(trade.exitTime).toLocaleDateString()}</td>
-              <td><span className="pill">{trade.exitReason}</span></td>
-              <td>{formatNumber(trade.quantity, 5)}</td>
-              <td className={trade.pnl >= 0 ? 'good' : 'bad'}>{formatCurrency(trade.pnl)}</td>
-              <td className={trade.pnlPct >= 0 ? 'good' : 'bad'}>{formatPercent(trade.pnlPct)}</td>
+          {positions.map((position) => (
+            <tr key={position.symbol}>
+              <td>
+                <strong>{position.label}</strong>
+                <span className="subtle"> {position.symbol}</span>
+              </td>
+              <td>{formatPct(position.allocationPct)}</td>
+              <td>{position.quantity >= 1 ? position.quantity.toFixed(6) : position.quantity.toFixed(8)}</td>
+              <td>{formatUsd(position.entryPriceUsdt)}</td>
+              <td>{formatUsd(position.currentPriceUsdt)}</td>
+              <td>{formatJpy(position.valueJpy)}</td>
+              <td className={tone(position.pnlJpy)}>{formatSignedJpy(position.pnlJpy)}</td>
+              <td className={tone(position.returnPct)}>{formatPct(position.returnPct)}</td>
             </tr>
           ))}
         </tbody>
@@ -109,168 +175,148 @@ function TradeTable({ trades }: { trades: Trade[] }) {
   );
 }
 
-function ParameterInput({
-  label,
-  name,
-  value,
-  step,
-  params,
-  setParams
-}: {
-  label: string;
-  name: keyof StrategyParams;
-  value: number;
-  step: string;
-  params: StrategyParams;
-  setParams: (params: StrategyParams) => void;
-}) {
+function LoadingState() {
   return (
-    <label className="field">
-      <span>{label}</span>
-      <input
-        type="number"
-        step={step}
-        value={value}
-        title={parameterHelp[name]}
-        onChange={(event) => setParams(updateNumberParam(params, name, event.target.value))}
-      />
-      <small>{parameterHelp[name]}</small>
-    </label>
+    <main className="app-shell center-state">
+      <div className="panel state-panel">
+        <p className="eyebrow">Loading</p>
+        <h1>最新データを読み込んでいます</h1>
+        <p>GitHub Pagesにデプロイされた日次スナップショットを取得中です。</p>
+      </div>
+    </main>
+  );
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <main className="app-shell center-state">
+      <div className="panel state-panel">
+        <p className="eyebrow">Data not ready</p>
+        <h1>日次データがまだ生成されていません</h1>
+        <p>{message}</p>
+        <p className="muted">GitHub Actionsの `Public Performance Dashboard` が完了すると、このURLで最新状態が見られます。</p>
+      </div>
+    </main>
   );
 }
 
 export default function App() {
-  const [params, setParams] = useState<StrategyParams>(defaultParams);
-  const [scenario, setScenario] = useState<ScenarioName>('trend');
-  const [csv, setCsv] = useState('');
-  const [useCsv, setUseCsv] = useState(false);
+  const [loadState, setLoadState] = useState<LoadState>({ status: 'loading', data: null, error: null });
 
-  const candles: Candle[] = useMemo(() => {
-    if (useCsv && csv.trim()) {
-      return parseCandlesCsv(csv);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadData() {
+      try {
+        const response = await fetch(`${dataUrl}?ts=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`performance.json の取得に失敗しました: HTTP ${response.status}`);
+        const data = (await response.json()) as DashboardData;
+        if (!cancelled) setLoadState({ status: 'ready', data, error: null });
+      } catch (error) {
+        if (!cancelled) setLoadState({ status: 'error', data: null, error: error instanceof Error ? error.message : 'unknown error' });
+      }
     }
-    return generateScenario(scenario, 420);
-  }, [csv, scenario, useCsv]);
 
-  const result = useMemo(() => runBacktest(candles, params), [candles, params]);
-  const metrics = result.metrics;
+    void loadData();
+    const timer = window.setInterval(loadData, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const data = loadState.data;
+  const portfolio = data?.portfolio;
+  const latestHistory = useMemo(() => portfolio?.history?.slice(-30) ?? [], [portfolio]);
+
+  if (loadState.status === 'loading') return <LoadingState />;
+  if (loadState.status === 'error' || !data || !portfolio) return <ErrorState message={loadState.error ?? 'データがありません。'} />;
 
   return (
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">Crypto Auto Trade Simulator</p>
-          <h1>実運用前に、売買ロジックの癖とリスクを見える化する</h1>
+          <p className="eyebrow">Public Performance Dashboard</p>
+          <h1>100万円を入れていたら、今いくらか</h1>
           <p>
-            EMA・RSI・ATRを組み合わせたトレンド追随戦略を、手数料・スリッページ・資金管理込みで検証します。
-            成績が良くても、まずはテストネットとペーパートレードに進む設計です。
+            BTC / ETH / SOL に分散した仮想ポートフォリオを、毎日自動で更新します。
+            このURLを開くだけで、最新の評価額・損益・リターンを確認できます。
           </p>
+          <div className="url-card">
+            <span>公開URL</span>
+            <a href={data.publicDashboardUrl}>{data.publicDashboardUrl}</a>
+          </div>
         </div>
         <div className="hero-card">
-          <span>最終残高</span>
-          <strong>{formatCurrency(metrics.finalEquity)}</strong>
-          <em className={metrics.totalReturn >= 0 ? 'good' : 'bad'}>{formatPercent(metrics.totalReturn)}</em>
+          <span>現在評価額</span>
+          <strong>{formatJpy(portfolio.currentValueJpy)}</strong>
+          <em className={tone(portfolio.pnlJpy)}>{formatSignedJpy(portfolio.pnlJpy)} / {formatPct(portfolio.totalReturnPct)}</em>
+          <small>初期投資額 {formatJpy(portfolio.initialInvestmentJpy)}</small>
         </div>
+      </section>
+
+      <section className="status-strip">
+        <div>
+          <span className="live-dot" />
+          <strong>自動更新</strong>
+          <small>{data.schedule.label}</small>
+        </div>
+        <div>
+          <strong>最終生成</strong>
+          <small>{formatDateTime(data.generatedAt)} JST</small>
+        </div>
+        <div>
+          <strong>データソース</strong>
+          <small>{data.source.exchange}</small>
+        </div>
+        <div>
+          <strong>USD/JPY</strong>
+          <small>{portfolio.currentUsdJpy.toFixed(4)}</small>
+        </div>
+      </section>
+
+      <section className="metrics-grid">
+        <MetricCard label="総リターン" value={formatPct(portfolio.totalReturnPct)} accent={tone(portfolio.totalReturnPct)} note="現在評価額 ÷ 初期投資額 - 1" />
+        <MetricCard label="今日の変化" value={formatPct(portfolio.todayReturnPct)} accent={tone(portfolio.todayReturnPct)} note="現在価格 ÷ 今日の始値ベース" />
+        <MetricCard label="前日終値比" value={formatPct(portfolio.previousCloseReturnPct)} accent={tone(portfolio.previousCloseReturnPct)} note="現在価格 ÷ 前日終値ベース" />
+        <MetricCard label="7日リターン" value={formatPct(portfolio.sevenDayReturnPct)} accent={tone(portfolio.sevenDayReturnPct)} note="保有数量固定で評価" />
+        <MetricCard label="30日リターン" value={formatPct(portfolio.thirtyDayReturnPct)} accent={tone(portfolio.thirtyDayReturnPct)} note="USDT価格 × USDJPY" />
       </section>
 
       <section className="grid two">
         <div className="panel">
           <div className="panel-heading">
-            <h2>データ</h2>
-            <label className="switch">
-              <input type="checkbox" checked={useCsv} onChange={(event) => setUseCsv(event.target.checked)} />
-              <span>CSVを使う</span>
-            </label>
+            <h2>評価額推移</h2>
+            <span className="muted">直近{latestHistory.length}ポイント</span>
           </div>
-
-          {!useCsv ? (
-            <label className="field">
-              <span>シナリオ</span>
-              <select value={scenario} onChange={(event) => setScenario(event.target.value as ScenarioName)}>
-                {Object.entries(scenarioLabels).map(([key, label]) => (
-                  <option value={key} key={key}>{label}</option>
-                ))}
-              </select>
-              <small>まずは相場環境ごとの挙動を確認します。</small>
-            </label>
-          ) : (
-            <label className="field">
-              <span>OHLCV CSV</span>
-              <textarea
-                rows={10}
-                placeholder="timestamp,open,high,low,close,volume"
-                value={csv}
-                onChange={(event) => setCsv(event.target.value)}
-              />
-              <small>timestamp, open, high, low, close, volume の順に入力してください。</small>
-            </label>
-          )}
+          <Sparkline points={latestHistory} />
         </div>
-
-        <div className="panel">
-          <h2>リスク制御</h2>
-          <div className="param-grid">
-            <ParameterInput label="初期資金" name="initialCapital" value={params.initialCapital} step="100" params={params} setParams={setParams} />
-            <ParameterInput label="1回リスク" name="riskPerTrade" value={params.riskPerTrade} step="0.001" params={params} setParams={setParams} />
-            <ParameterInput label="最大建玉" name="maxPositionPct" value={params.maxPositionPct} step="0.01" params={params} setParams={setParams} />
-            <ParameterInput label="DD停止" name="maxDrawdownStop" value={params.maxDrawdownStop} step="0.01" params={params} setParams={setParams} />
-            <ParameterInput label="手数料bps" name="feeBps" value={params.feeBps} step="1" params={params} setParams={setParams} />
-            <ParameterInput label="滑りbps" name="slippageBps" value={params.slippageBps} step="1" params={params} setParams={setParams} />
-          </div>
+        <div className="panel summary-panel">
+          <h2>追跡条件</h2>
+          <dl>
+            <div><dt>開始日時</dt><dd>{formatDateTime(portfolio.startedAt)} JST</dd></div>
+            <div><dt>初期投資額</dt><dd>{formatJpy(portfolio.initialInvestmentJpy)}</dd></div>
+            <div><dt>初回USD/JPY</dt><dd>{portfolio.entryUsdJpy.toFixed(4)}</dd></div>
+            <div><dt>初回コスト</dt><dd>手数料 {portfolio.entryFeeBps}bps / 滑り {portfolio.entrySlippageBps}bps</dd></div>
+            <div><dt>公開データ</dt><dd>{data.source.restBaseUrl}</dd></div>
+          </dl>
         </div>
-      </section>
-
-      <section className="panel">
-        <h2>戦略パラメータ</h2>
-        <div className="param-grid wide">
-          <ParameterInput label="短期EMA" name="fastEma" value={params.fastEma} step="1" params={params} setParams={setParams} />
-          <ParameterInput label="長期EMA" name="slowEma" value={params.slowEma} step="1" params={params} setParams={setParams} />
-          <ParameterInput label="RSI期間" name="rsiPeriod" value={params.rsiPeriod} step="1" params={params} setParams={setParams} />
-          <ParameterInput label="RSI下限" name="rsiEntryMin" value={params.rsiEntryMin} step="1" params={params} setParams={setParams} />
-          <ParameterInput label="RSI上限" name="rsiEntryMax" value={params.rsiEntryMax} step="1" params={params} setParams={setParams} />
-          <ParameterInput label="ATR期間" name="atrPeriod" value={params.atrPeriod} step="1" params={params} setParams={setParams} />
-          <ParameterInput label="ATRストップ" name="atrStopMultiplier" value={params.atrStopMultiplier} step="0.1" params={params} setParams={setParams} />
-          <ParameterInput label="ATR利確" name="takeProfitAtr" value={params.takeProfitAtr} step="0.1" params={params} setParams={setParams} />
-          <ParameterInput label="ATRトレール" name="trailingAtr" value={params.trailingAtr} step="0.1" params={params} setParams={setParams} />
-          <ParameterInput label="最小EMA差" name="minTrendPct" value={params.minTrendPct} step="0.001" params={params} setParams={setParams} />
-        </div>
-      </section>
-
-      <section className="metrics-grid">
-        <MetricCard label="総リターン" value={formatPercent(metrics.totalReturn)} accent={metrics.totalReturn >= 0 ? 'good' : 'bad'} />
-        <MetricCard label="最大DD" value={formatPercent(metrics.maxDrawdown)} accent="bad" />
-        <MetricCard label="勝率" value={formatPercent(metrics.winRate)} />
-        <MetricCard label="Profit Factor" value={Number.isFinite(metrics.profitFactor) ? formatNumber(metrics.profitFactor, 2) : '∞'} />
-        <MetricCard label="取引数" value={`${metrics.tradeCount}`} />
-        <MetricCard label="Sharpe概算" value={formatNumber(metrics.sharpe, 2)} />
       </section>
 
       <section className="panel">
         <div className="panel-heading">
-          <h2>Equity Curve</h2>
-          <span className="muted">データ本数: {candles.length}</span>
+          <h2>銘柄別パフォーマンス</h2>
+          <span className="muted">BTC 34% / ETH 33% / SOL 33%</span>
         </div>
-        <EquityChart points={result.equityCurve} />
-      </section>
-
-      <section className="panel">
-        <h2>直近トレード</h2>
-        <TradeTable trades={result.trades} />
+        <PositionTable positions={portfolio.positions} />
       </section>
 
       <section className="panel notes">
-        <h2>実運用へ進める時のチェック</h2>
+        <h2>毎日見る場所</h2>
         <p>
-          成績が良い場合でも、すぐ本番発注には進めません。まず同じロジックをペーパートレードで走らせ、
-          約定ずれ、APIエラー、スリッページ、連敗時の停止が想定通りかを確認してください。
+          このページはGitHub Actionsで毎日再生成されます。ブラウザにブックマークしておけば、毎回このURLを開くだけで最新状態を確認できます。
+          GitHub Issue「Portfolio Performance Tracker」にも同じスナップショットと日次履歴コメントを残します。
         </p>
-        <ul>
-          <li>APIキーはサーバー側だけに置く</li>
-          <li>デフォルトは必ず DRY_RUN=true</li>
-          <li>1日損失・連敗・API失敗回数で自動停止</li>
-          <li>注文前に最小注文数量、板厚、価格乖離を確認</li>
-          <li>全シグナルと注文を監査ログに残す</li>
-        </ul>
       </section>
     </main>
   );
