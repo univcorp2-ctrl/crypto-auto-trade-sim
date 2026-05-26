@@ -3,55 +3,50 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 const CONFIG_PATH = 'config/portfolio.json';
 const PUBLIC_DATA_PATH = 'public/data/performance.json';
 const REPORT_PATH = 'reports/latest-public-dashboard.md';
-const ISSUE_TITLE = 'Portfolio Performance Tracker';
-const TIME_ZONE = process.env.REPORT_TIME_ZONE || 'Asia/Tokyo';
 const PUBLIC_DASHBOARD_URL = process.env.PUBLIC_DASHBOARD_URL || 'https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/';
+const TIME_ZONE = process.env.REPORT_TIME_ZONE || 'Asia/Tokyo';
+const FALLBACK_PRICES = {
+  BTCUSDT: 107500,
+  ETHUSDT: 2910,
+  SOLUSDT: 181
+};
 
 async function main() {
-  const config = await loadConfig();
+  const config = JSON.parse(await readFile(CONFIG_PATH, 'utf8'));
   const assets = normalizeAssets(config.assets);
-  const initialInvestmentJpy = Number(process.env.INITIAL_INVESTMENT_JPY || config.initialInvestmentJpy || 1_000_000);
   const exchangeRestBase = normalizeBaseUrl(process.env.EXCHANGE_REST_BASE || config.exchange?.restBaseUrl || 'https://api.binance.com');
-  const resetState = String(process.env.PORTFOLIO_RESET_STATE || 'false').toLowerCase() === 'true';
+  const initialInvestmentJpy = Number(process.env.INITIAL_INVESTMENT_JPY || config.initialInvestmentJpy || 1_000_000);
 
-  const token = process.env.GITHUB_TOKEN;
-  const repository = process.env.GITHUB_REPOSITORY;
-  const existingIssue = token && repository ? await findTrackerIssue(token, repository).catch(() => null) : null;
+  let mode = 'live-public-data';
+  let prices;
+  let dailyKlines;
+  let usdJpy;
 
-  const symbols = assets.map((asset) => asset.symbol);
-  const [prices, dailyKlines, usdJpy] = await Promise.all([
-    fetchCurrentPrices(symbols, exchangeRestBase),
-    fetchDailyKlines(symbols, exchangeRestBase, 40),
-    fetchUsdJpy(config.fx?.fallbackUsdJpy)
-  ]);
-
-  let state = !resetState && existingIssue?.body ? readEmbeddedState(existingIssue.body) : null;
-  if (!state || !isStateCompatible(state, assets)) {
-    state = createInitialState({ config, assets, prices, usdJpy, initialInvestmentJpy });
+  try {
+    [prices, dailyKlines, usdJpy] = await Promise.all([
+      fetchCurrentPrices(assets.map((asset) => asset.symbol), exchangeRestBase),
+      fetchDailyKlines(assets.map((asset) => asset.symbol), exchangeRestBase, 45),
+      fetchUsdJpy(config.fx?.fallbackUsdJpy || 155)
+    ]);
+  } catch (error) {
+    mode = 'fallback-sample-data';
+    console.warn(`Public market data fetch failed; using fallback sample data. ${error instanceof Error ? error.message : String(error)}`);
+    usdJpy = Number(config.fx?.fallbackUsdJpy || 155);
+    prices = Object.fromEntries(assets.map((asset) => [asset.symbol, FALLBACK_PRICES[asset.symbol] || 100]));
+    dailyKlines = Object.fromEntries(assets.map((asset, index) => [asset.symbol, createFallbackKlines(prices[asset.symbol], index)]));
   }
 
-  const snapshot = calculateSnapshot({ state, assets, prices, dailyKlines, usdJpy });
-  const dashboardData = renderDashboardData({ config, state, snapshot, dailyKlines, exchangeRestBase, usdJpy });
-  const markdown = renderMarkdownReport({ state, snapshot, dashboardData, exchangeRestBase, usdJpy });
+  const data = buildDashboardData({ config, assets, prices, dailyKlines, usdJpy, exchangeRestBase, initialInvestmentJpy, mode });
+  const report = renderMarkdownReport(data);
 
   await mkdir('public/data', { recursive: true });
   await mkdir('reports', { recursive: true });
-  await writeFile(PUBLIC_DATA_PATH, JSON.stringify(dashboardData, null, 2), 'utf8');
-  await writeFile(REPORT_PATH, markdown, 'utf8');
+  await writeFile(PUBLIC_DATA_PATH, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  await writeFile(REPORT_PATH, report, 'utf8');
 
-  if (token && repository) {
-    await publishIssue({ token, repository, markdown, state, existingIssue });
-  } else {
-    console.log('GITHUB_TOKEN or GITHUB_REPOSITORY is not set; skipping Issue publication.');
-  }
-
-  await publishWebhook({ dashboardData, markdown });
+  await publishWebhook(data, report);
   console.log(`Generated ${PUBLIC_DATA_PATH}`);
   console.log(`Dashboard URL: ${PUBLIC_DASHBOARD_URL}`);
-}
-
-async function loadConfig() {
-  return JSON.parse(await readFile(CONFIG_PATH, 'utf8'));
 }
 
 function normalizeAssets(assets) {
@@ -97,418 +92,274 @@ async function fetchDailyKlines(symbols, baseUrl, limit) {
       }))
       .filter((row) => row.open > 0 && row.high > 0 && row.low > 0 && row.close > 0 && row.high >= row.low)
       .sort((a, b) => a.openTime - b.openTime);
+    if (rows.length < 2) throw new Error(`not enough kline rows for ${symbol}`);
     return [symbol, rows];
   }));
   return Object.fromEntries(entries);
 }
 
 async function fetchUsdJpy(fallback) {
-  const url = new URL('https://api.frankfurter.dev/v2/rates');
-  url.searchParams.set('base', 'USD');
-  url.searchParams.set('quotes', 'JPY');
-
   try {
+    const url = new URL('https://api.frankfurter.dev/v2/rates');
+    url.searchParams.set('base', 'USD');
+    url.searchParams.set('symbols', 'JPY');
     const payload = await fetchJson(url);
     const rate = Number(payload.rates?.JPY);
     if (Number.isFinite(rate) && rate > 0) return rate;
   } catch (error) {
     console.warn(`USD/JPY fetch failed; using fallback. ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  const fallbackRate = Number(process.env.USD_JPY_FALLBACK || fallback || 157.8);
-  if (!Number.isFinite(fallbackRate) || fallbackRate <= 0) throw new Error('USD/JPY fallback is invalid');
-  return fallbackRate;
+  return Number(fallback || 155);
 }
 
-async function fetchJson(url, attempt = 1) {
-  const maxAttempts = 3;
-  const response = await fetch(url, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(15_000)
-  }).catch((error) => {
-    if (attempt < maxAttempts) return null;
-    throw error;
-  });
-
-  if (!response) {
-    await sleep(500 * attempt);
-    return fetchJson(url, attempt + 1);
+async function fetchJson(url) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(url, {
+      headers: { accept: 'application/json', 'user-agent': 'crypto-auto-trade-sim/1.0' },
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`${url.hostname} returned HTTP ${response.status}`);
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
   }
-
-  if (!response.ok) {
-    if (attempt < maxAttempts && [408, 418, 429, 500, 502, 503, 504].includes(response.status)) {
-      await sleep(800 * attempt);
-      return fetchJson(url, attempt + 1);
-    }
-    throw new Error(`HTTP ${response.status} from ${url.href}`);
-  }
-
-  return response.json();
 }
 
-function createInitialState({ config, assets, prices, usdJpy, initialInvestmentJpy }) {
-  const entryFeeBps = Number(config.costs?.entryFeeBps || 0);
-  const entrySlippageBps = Number(config.costs?.entrySlippageBps || 0);
+function buildDashboardData({ config, assets, prices, dailyKlines, usdJpy, exchangeRestBase, initialInvestmentJpy, mode }) {
+  const entryUsdJpy = Number(config.entryUsdJpy || usdJpy);
+  const entryFeeBps = Number(config.costs?.entryFeeBps ?? 10);
+  const entrySlippageBps = Number(config.costs?.entrySlippageBps ?? 8);
   const costMultiplier = 1 + (entryFeeBps + entrySlippageBps) / 10_000;
 
-  return {
-    version: 1,
-    portfolioName: config.portfolioName || 'Hypothetical Crypto Portfolio',
-    startedAt: new Date().toISOString(),
-    initialInvestmentJpy,
-    entryUsdJpy: usdJpy,
-    entryFeeBps,
-    entrySlippageBps,
-    positions: assets.map((asset) => {
-      const allocationJpy = initialInvestmentJpy * asset.allocationPct;
-      const allocationUsdt = allocationJpy / usdJpy;
-      const entryPriceUsdt = prices[asset.symbol];
-      const effectiveEntryPriceUsdt = entryPriceUsdt * costMultiplier;
-      return {
-        symbol: asset.symbol,
-        label: asset.label,
-        allocationPct: asset.allocationPct,
-        allocationJpy,
-        allocationUsdt,
-        entryPriceUsdt,
-        effectiveEntryPriceUsdt,
-        quantity: allocationUsdt / effectiveEntryPriceUsdt
-      };
-    })
-  };
-}
-
-function isStateCompatible(state, assets) {
-  if (!state || !Array.isArray(state.positions)) return false;
-  const configured = new Set(assets.map((asset) => asset.symbol));
-  const stored = new Set(state.positions.map((position) => position.symbol));
-  return configured.size === stored.size && [...configured].every((symbol) => stored.has(symbol));
-}
-
-function calculateSnapshot({ state, prices, dailyKlines, usdJpy }) {
-  const rows = state.positions.map((position) => {
-    const currentPriceUsdt = prices[position.symbol];
-    const valueJpy = position.quantity * currentPriceUsdt * usdJpy;
-    const pnlJpy = valueJpy - position.allocationJpy;
-    const klines = dailyKlines[position.symbol] || [];
-    const latest = klines.at(-1);
-
-    const valueAtPrice = (price) => price && price > 0 ? position.quantity * price * usdJpy : null;
-    const closeDaysAgo = (daysAgo) => {
-      const index = klines.length - 1 - daysAgo;
-      return index >= 0 ? klines[index].close : null;
-    };
+  const positions = assets.map((asset) => {
+    const klines = dailyKlines[asset.symbol] || [];
+    const firstClose = klines[0]?.close || prices[asset.symbol];
+    const currentPriceUsdt = prices[asset.symbol];
+    const allocationJpy = Math.round(initialInvestmentJpy * asset.allocationPct);
+    const entryPriceUsdt = firstClose * costMultiplier;
+    const quantity = allocationJpy / entryUsdJpy / entryPriceUsdt;
+    const valueJpy = quantity * currentPriceUsdt * usdJpy;
+    const pnlJpy = valueJpy - allocationJpy;
+    const sevenDayReturnPct = returnSince(klines, currentPriceUsdt, 7);
+    const thirtyDayReturnPct = returnSince(klines, currentPriceUsdt, 30);
+    const returnPct = pnlJpy / allocationJpy;
+    const { signal, reason } = getTradeSignal({ sevenDayReturnPct, thirtyDayReturnPct, returnPct });
 
     return {
-      symbol: position.symbol,
-      label: position.label,
-      allocationPct: position.allocationPct,
-      quantity: position.quantity,
-      allocationJpy: position.allocationJpy,
-      entryPriceUsdt: position.entryPriceUsdt,
-      effectiveEntryPriceUsdt: position.effectiveEntryPriceUsdt,
+      symbol: asset.symbol,
+      label: asset.label,
+      allocationPct: asset.allocationPct,
+      quantity,
+      allocationJpy,
+      entryPriceUsdt,
       currentPriceUsdt,
-      valueJpy,
-      pnlJpy,
-      returnPct: pnlJpy / position.allocationJpy,
-      todayOpenValueJpy: valueAtPrice(latest?.open),
-      previousCloseValueJpy: valueAtPrice(closeDaysAgo(1)),
-      sevenDayValueJpy: valueAtPrice(closeDaysAgo(7)),
-      thirtyDayValueJpy: valueAtPrice(closeDaysAgo(30))
+      valueJpy: Math.round(valueJpy),
+      pnlJpy: Math.round(pnlJpy),
+      returnPct,
+      sevenDayReturnPct,
+      thirtyDayReturnPct,
+      signal,
+      signalReason: reason
     };
   });
 
-  const totalValueJpy = sum(rows.map((row) => row.valueJpy));
-  const totalPnlJpy = totalValueJpy - state.initialInvestmentJpy;
-  const fromReference = (values) => {
-    if (values.some((value) => value === null || value === undefined || !Number.isFinite(value))) return null;
-    const reference = sum(values);
-    return reference > 0 ? totalValueJpy / reference - 1 : null;
-  };
+  const history = buildPortfolioHistory({ assets, dailyKlines, positions, usdJpy, initialInvestmentJpy });
+  const currentValueJpy = Math.round(positions.reduce((sum, position) => sum + position.valueJpy, 0));
+  const pnlJpy = currentValueJpy - initialInvestmentJpy;
+  const totalReturnPct = pnlJpy / initialInvestmentJpy;
+  const todayReturnPct = history.length >= 2 ? (history.at(-1).valueJpy - history.at(-2).valueJpy) / history.at(-2).valueJpy : null;
+  const previousCloseReturnPct = todayReturnPct;
+  const sevenDayReturnPct = history.length >= 8 ? (history.at(-1).valueJpy - history.at(-8).valueJpy) / history.at(-8).valueJpy : null;
+  const thirtyDayReturnPct = history.length >= 31 ? (history.at(-1).valueJpy - history.at(-31).valueJpy) / history.at(-31).valueJpy : null;
+  const maxDrawdownPct = calculateMaxDrawdown(history);
+  const volatilityPct = calculateAnnualizedVolatility(history);
+  const riskScore = calculateRiskScore(maxDrawdownPct, volatilityPct);
 
   return {
     generatedAt: new Date().toISOString(),
-    totalValueJpy,
-    totalPnlJpy,
-    totalReturnPct: totalPnlJpy / state.initialInvestmentJpy,
-    todayReturnPct: fromReference(rows.map((row) => row.todayOpenValueJpy)),
-    previousCloseReturnPct: fromReference(rows.map((row) => row.previousCloseValueJpy)),
-    sevenDayReturnPct: fromReference(rows.map((row) => row.sevenDayValueJpy)),
-    thirtyDayReturnPct: fromReference(rows.map((row) => row.thirtyDayValueJpy)),
-    rows
-  };
-}
-
-function renderDashboardData({ config, state, snapshot, dailyKlines, exchangeRestBase, usdJpy }) {
-  return {
-    schemaVersion: 1,
-    publicDashboardUrl: PUBLIC_DASHBOARD_URL,
-    generatedAt: snapshot.generatedAt,
     timeZone: TIME_ZONE,
-    schedule: {
-      label: '毎日 09:30 JST',
-      cronUtc: '30 0 * * *'
-    },
+    publicDashboardUrl: PUBLIC_DASHBOARD_URL,
     source: {
-      exchange: 'Binance Spot public market data',
-      restBaseUrl: exchangeRestBase.origin,
-      fxProvider: 'Frankfurter USD/JPY',
+      exchange: mode === 'live-public-data' ? config.exchange?.name || 'Binance Spot public market data' : 'Fallback sample data',
+      restBaseUrl: exchangeRestBase,
+      fxProvider: mode === 'live-public-data' ? config.fx?.provider || 'Frankfurter public FX rates' : 'Fallback USD/JPY',
       quoteCurrency: 'USDT',
-      baseCurrency: 'JPY'
+      baseCurrency: 'JPY',
+      mode
+    },
+    automation: {
+      dryRun: config.automation?.dryRun !== false,
+      liveTradingEnabled: config.automation?.liveTradingEnabled === true && process.env.ENABLE_LIVE_TRADING === 'true',
+      scheduleLabel: config.automation?.scheduleLabel || 'Every day 09:30 JST',
+      cronUtc: config.automation?.cronUtc || '30 0 * * *',
+      githubActionsWorkflow: 'Deploy Web App to GitHub Pages'
     },
     portfolio: {
-      name: state.portfolioName || config.portfolioName,
-      startedAt: state.startedAt,
-      initialInvestmentJpy: state.initialInvestmentJpy,
-      entryUsdJpy: state.entryUsdJpy,
+      name: config.name || 'Crypto Dry-run Portfolio',
+      startedAt: config.startedAt || new Date().toISOString(),
+      initialInvestmentJpy,
+      entryUsdJpy,
       currentUsdJpy: usdJpy,
-      entryFeeBps: state.entryFeeBps,
-      entrySlippageBps: state.entrySlippageBps,
-      currentValueJpy: snapshot.totalValueJpy,
-      pnlJpy: snapshot.totalPnlJpy,
-      totalReturnPct: snapshot.totalReturnPct,
-      todayReturnPct: snapshot.todayReturnPct,
-      previousCloseReturnPct: snapshot.previousCloseReturnPct,
-      sevenDayReturnPct: snapshot.sevenDayReturnPct,
-      thirtyDayReturnPct: snapshot.thirtyDayReturnPct,
-      positions: snapshot.rows.map((row) => ({
-        symbol: row.symbol,
-        label: row.label,
-        allocationPct: row.allocationPct,
-        quantity: row.quantity,
-        allocationJpy: row.allocationJpy,
-        entryPriceUsdt: row.entryPriceUsdt,
-        effectiveEntryPriceUsdt: row.effectiveEntryPriceUsdt,
-        currentPriceUsdt: row.currentPriceUsdt,
-        valueJpy: row.valueJpy,
-        pnlJpy: row.pnlJpy,
-        returnPct: row.returnPct
-      })),
-      history: buildHistory(state, dailyKlines, usdJpy, snapshot)
+      entryFeeBps,
+      entrySlippageBps,
+      currentValueJpy,
+      pnlJpy,
+      totalReturnPct,
+      todayReturnPct,
+      previousCloseReturnPct,
+      sevenDayReturnPct,
+      thirtyDayReturnPct,
+      maxDrawdownPct,
+      volatilityPct,
+      riskScore,
+      positions,
+      history
     }
   };
 }
 
-function buildHistory(state, dailyKlines, usdJpy, snapshot) {
-  const firstSymbol = state.positions[0]?.symbol;
-  const baseRows = (dailyKlines[firstSymbol] || []).slice(-30);
-  const history = baseRows.map((baseRow) => {
-    const date = toIsoDate(baseRow.openTime);
-    const valueJpy = state.positions.reduce((total, position) => {
-      const row = (dailyKlines[position.symbol] || []).find((item) => toIsoDate(item.openTime) === date);
-      const price = row?.close || snapshot.rows.find((item) => item.symbol === position.symbol)?.currentPriceUsdt || position.entryPriceUsdt;
-      return total + position.quantity * price * usdJpy;
-    }, 0);
-    return {
-      date,
-      valueJpy,
-      returnPct: valueJpy / state.initialInvestmentJpy - 1
-    };
-  });
-
-  const today = toIsoDate(Date.now());
-  const last = history.at(-1);
-  if (!last || last.date !== today) {
-    history.push({ date: today, valueJpy: snapshot.totalValueJpy, returnPct: snapshot.totalReturnPct });
-  } else {
-    last.valueJpy = snapshot.totalValueJpy;
-    last.returnPct = snapshot.totalReturnPct;
-  }
-
-  return history;
+function returnSince(klines, currentPrice, days) {
+  if (!Array.isArray(klines) || klines.length < days + 1) return null;
+  const base = klines.at(-(days + 1))?.close;
+  return base > 0 ? (currentPrice - base) / base : null;
 }
 
-function renderMarkdownReport({ state, snapshot, dashboardData, exchangeRestBase, usdJpy }) {
-  const status = snapshot.totalPnlJpy >= 0 ? '🟢' : '🔴';
+function buildPortfolioHistory({ assets, dailyKlines, positions, usdJpy, initialInvestmentJpy }) {
+  const minLength = Math.min(...assets.map((asset) => dailyKlines[asset.symbol]?.length || 0));
+  if (!Number.isFinite(minLength) || minLength <= 1) return [];
+  const startIndex = Math.max(0, minLength - 45);
+  const rows = [];
+
+  for (let offset = startIndex; offset < minLength; offset += 1) {
+    const valueJpy = assets.reduce((sum, asset) => {
+      const position = positions.find((item) => item.symbol === asset.symbol);
+      const close = dailyKlines[asset.symbol][offset]?.close || 0;
+      return sum + (position?.quantity || 0) * close * usdJpy;
+    }, 0);
+    const dateMs = dailyKlines[assets[0].symbol][offset]?.openTime || Date.now();
+    rows.push({
+      date: new Date(dateMs).toISOString().slice(0, 10),
+      valueJpy: Math.round(valueJpy),
+      returnPct: (valueJpy - initialInvestmentJpy) / initialInvestmentJpy
+    });
+  }
+
+  const latest = rows.at(-1);
+  if (latest) {
+    latest.valueJpy = Math.round(positions.reduce((sum, position) => sum + position.valueJpy, 0));
+    latest.returnPct = (latest.valueJpy - initialInvestmentJpy) / initialInvestmentJpy;
+  }
+
+  return rows;
+}
+
+function calculateMaxDrawdown(points) {
+  let peak = 0;
+  let maxDrawdown = 0;
+  for (const point of points) {
+    peak = Math.max(peak, point.valueJpy);
+    if (peak > 0) maxDrawdown = Math.min(maxDrawdown, (point.valueJpy - peak) / peak);
+  }
+  return maxDrawdown;
+}
+
+function calculateAnnualizedVolatility(points) {
+  if (points.length < 3) return 0;
+  const returns = [];
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1].valueJpy;
+    const current = points[index].valueJpy;
+    if (previous > 0 && current > 0) returns.push((current - previous) / previous);
+  }
+  if (returns.length < 2) return 0;
+  const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
+  const variance = returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1);
+  return Math.sqrt(variance) * Math.sqrt(365);
+}
+
+function calculateRiskScore(maxDrawdownPct, volatilityPct) {
+  const drawdownPenalty = Math.min(Math.abs(maxDrawdownPct) * 260, 65);
+  const volatilityPenalty = Math.min(Math.abs(volatilityPct) * 80, 35);
+  return Math.round(Math.max(0, Math.min(100, 100 - drawdownPenalty - volatilityPenalty)));
+}
+
+function getTradeSignal({ sevenDayReturnPct, thirtyDayReturnPct, returnPct }) {
+  const sevenDay = sevenDayReturnPct ?? 0;
+  const thirtyDay = thirtyDayReturnPct ?? 0;
+  if (sevenDay > 0.045 && thirtyDay > 0.02) {
+    return { signal: 'BUY', reason: '7日・30日モメンタムが両方プラス。小さく追加検討。' };
+  }
+  if (sevenDay < -0.06 || thirtyDay < -0.12 || returnPct < -0.2) {
+    return { signal: 'REDUCE', reason: '下落率がリスク閾値を超過。縮小または様子見。' };
+  }
+  return { signal: 'HOLD', reason: '優位性が中立。現ポジション維持。' };
+}
+
+function createFallbackKlines(currentPrice, indexSeed) {
+  const now = Date.now();
+  return Array.from({ length: 45 }, (_, index) => {
+    const drift = 1 + (index - 44) * 0.0028;
+    const wave = 1 + Math.sin(index / 4 + indexSeed) * 0.035;
+    const close = currentPrice * drift * wave;
+    const openTime = now - (44 - index) * 86_400_000;
+    return {
+      openTime,
+      open: close * 0.99,
+      high: close * 1.025,
+      low: close * 0.975,
+      close,
+      volume: 0,
+      closeTime: openTime + 86_399_000
+    };
+  });
+}
+
+function renderMarkdownReport(data) {
   const lines = [
-    '# Portfolio Performance Tracker',
+    `# ${data.portfolio.name}`,
     '',
-    `${status} **${formatJpy(snapshot.totalValueJpy)}** (${formatSignedJpy(snapshot.totalPnlJpy)}, ${formatPct(snapshot.totalReturnPct)})`,
-    '',
-    `Dashboard: ${PUBLIC_DASHBOARD_URL}`,
-    '',
-    '| Metric | Value |',
-    '|---|---:|',
-    `| Initial investment | ${formatJpy(state.initialInvestmentJpy)} |`,
-    `| Current value | ${formatJpy(snapshot.totalValueJpy)} |`,
-    `| Total P/L | ${formatSignedJpy(snapshot.totalPnlJpy)} |`,
-    `| Total return | ${formatPct(snapshot.totalReturnPct)} |`,
-    `| Today return | ${formatPct(snapshot.todayReturnPct)} |`,
-    `| vs previous close | ${formatPct(snapshot.previousCloseReturnPct)} |`,
-    `| 7D return | ${formatPct(snapshot.sevenDayReturnPct)} |`,
-    `| 30D return | ${formatPct(snapshot.thirtyDayReturnPct)} |`,
-    `| USD/JPY used | ${usdJpy.toFixed(4)} |`,
+    `- Generated: ${data.generatedAt}`,
+    `- Dashboard: ${data.publicDashboardUrl}`,
+    `- Current value: ${data.portfolio.currentValueJpy.toLocaleString('ja-JP')} JPY`,
+    `- P/L: ${data.portfolio.pnlJpy.toLocaleString('ja-JP')} JPY`,
+    `- Return: ${(data.portfolio.totalReturnPct * 100).toFixed(2)}%`,
+    `- Risk score: ${data.portfolio.riskScore}/100`,
+    `- Data mode: ${data.source.mode}`,
     '',
     '## Positions',
     '',
-    '| Asset | Quantity | Entry USDT | Current USDT | Value JPY | P/L JPY | Return |',
-    '|---|---:|---:|---:|---:|---:|---:|',
-    ...dashboardData.portfolio.positions.map((row) => [
-      `| ${row.label} (${row.symbol})`,
-      formatQuantity(row.quantity),
-      formatUsd(row.entryPriceUsdt),
-      formatUsd(row.currentPriceUsdt),
-      formatJpy(row.valueJpy),
-      formatSignedJpy(row.pnlJpy),
-      formatPct(row.returnPct),
-      '|'
-    ].join(' | ')),
-    '',
-    '## Update policy',
-    '',
-    '- Public dashboard is rebuilt every day at 09:30 JST.',
-    '- This tracker is hypothetical and does not place orders.',
-    `- Market data source: ${exchangeRestBase.origin}`,
-    '- The latest Issue body is updated, and daily comments preserve history.',
-    '',
-    `<!-- portfolio-report:${formatDate(new Date(snapshot.generatedAt))} -->`,
-    embedState(state)
+    '| Asset | Value JPY | P/L JPY | Return | Signal |',
+    '|---|---:|---:|---:|---|',
+    ...data.portfolio.positions.map((position) =>
+      `| ${position.label} (${position.symbol}) | ${position.valueJpy.toLocaleString('ja-JP')} | ${position.pnlJpy.toLocaleString('ja-JP')} | ${(position.returnPct * 100).toFixed(2)}% | ${position.signal} |`
+    ),
+    ''
   ];
-  return lines.join('\n');
+  return `${lines.join('\n')}\n`;
 }
 
-async function publishIssue({ token, repository, markdown, state, existingIssue }) {
-  const headers = githubHeaders(token);
-  let issue = existingIssue || await findTrackerIssue(token, repository);
-
-  if (!issue) {
-    issue = await githubJson(`https://api.github.com/repos/${repository}/issues`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ title: ISSUE_TITLE, body: markdown })
-    });
-  } else {
-    issue = await githubJson(`https://api.github.com/repos/${repository}/issues/${issue.number}`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ body: markdown })
-    });
-  }
-
-  const marker = `portfolio-report:${formatDate(new Date())}`;
-  const comments = await githubJson(`https://api.github.com/repos/${repository}/issues/${issue.number}/comments?per_page=100`, { headers });
-  const alreadyCommented = comments.some((comment) => typeof comment.body === 'string' && comment.body.includes(marker));
-  if (!alreadyCommented) {
-    await githubJson(`https://api.github.com/repos/${repository}/issues/${issue.number}/comments`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ body: markdown.replace(embedState(state), '') })
-    });
-  }
-
-  console.log(`Published dashboard snapshot to issue #${issue.number}.`);
-}
-
-async function findTrackerIssue(token, repository) {
-  const headers = githubHeaders(token);
-  const issues = await githubJson(`https://api.github.com/repos/${repository}/issues?state=open&per_page=100`, { headers });
-  return issues.find((issue) => issue.title === ISSUE_TITLE && !issue.pull_request) || null;
-}
-
-function githubHeaders(token) {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
-    'Content-Type': 'application/json'
-  };
-}
-
-async function githubJson(url, options) {
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`GitHub API failed: ${response.status} ${text}`);
-  }
-  return response.json();
-}
-
-async function publishWebhook({ dashboardData, markdown }) {
+async function publishWebhook(data, markdown) {
   const webhookUrl = process.env.PERFORMANCE_WEBHOOK_URL;
   if (!webhookUrl) return;
-
-  const p = dashboardData.portfolio;
-  const summary = [
-    `Portfolio Performance Dashboard`,
-    `URL: ${PUBLIC_DASHBOARD_URL}`,
-    `Current: ${formatJpy(p.currentValueJpy)} (${formatSignedJpy(p.pnlJpy)}, ${formatPct(p.totalReturnPct)})`,
-    `Today: ${formatPct(p.todayReturnPct)} | 7D: ${formatPct(p.sevenDayReturnPct)} | 30D: ${formatPct(p.thirtyDayReturnPct)}`
-  ].join('\n');
-
-  const response = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: summary, content: summary, markdown })
-  });
-
-  if (!response.ok) throw new Error(`webhook publish failed: ${response.status}`);
-}
-
-function embedState(state) {
-  return `<!-- portfolio-state:${Buffer.from(JSON.stringify(state), 'utf8').toString('base64')} -->`;
-}
-
-function readEmbeddedState(body) {
-  const match = body.match(/<!-- portfolio-state:([A-Za-z0-9+/=]+) -->/);
-  if (!match) return null;
   try {
-    return JSON.parse(Buffer.from(match[1], 'base64').toString('utf8'));
-  } catch {
-    return null;
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: `${data.portfolio.name}: ${data.portfolio.currentValueJpy.toLocaleString('ja-JP')} JPY (${(data.portfolio.totalReturnPct * 100).toFixed(2)}%)`,
+        markdown
+      })
+    });
+  } catch (error) {
+    console.warn(`Webhook notification failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 function normalizeBaseUrl(value) {
   const url = new URL(value);
-  return new URL(url.origin);
-}
-
-function sum(values) {
-  return values.reduce((total, value) => total + value, 0);
-}
-
-function toIsoDate(timestamp) {
-  return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function formatJpy(value) {
-  if (!Number.isFinite(value)) return '—';
-  return new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(value);
-}
-
-function formatSignedJpy(value) {
-  if (!Number.isFinite(value)) return '—';
-  return `${value >= 0 ? '+' : '-'}${formatJpy(Math.abs(value))}`;
-}
-
-function formatUsd(value) {
-  if (!Number.isFinite(value)) return '—';
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: value >= 100 ? 2 : 6 }).format(value);
-}
-
-function formatPct(value) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return '—';
-  return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
-}
-
-function formatQuantity(value) {
-  if (!Number.isFinite(value)) return '—';
-  return value >= 1 ? value.toFixed(6) : value.toFixed(8);
-}
-
-function formatDate(date) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).formatToParts(date);
-  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${lookup.year}-${lookup.month}-${lookup.day}`;
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return `${url.protocol}//${url.host}`;
 }
 
 main().catch((error) => {
