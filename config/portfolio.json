@@ -1,37 +1,31 @@
 {
-  "portfolioName": "Hypothetical 1,000,000 JPY Crypto Portfolio",
+  "name": "BTC / ETH / SOL Dry-run Portfolio",
+  "startedAt": "2026-05-01T00:00:00.000Z",
   "initialInvestmentJpy": 1000000,
-  "baseCurrency": "JPY",
-  "quoteCurrency": "USDT",
+  "entryUsdJpy": 155,
+  "entryFeeBps": 10,
+  "entrySlippageBps": 8,
   "exchange": {
-    "marketDataProfile": "binance-spot",
+    "name": "Binance Spot public market data",
     "restBaseUrl": "https://api.binance.com"
   },
   "fx": {
-    "provider": "frankfurter",
-    "base": "USD",
-    "quote": "JPY",
-    "fallbackUsdJpy": 157.8
-  },
-  "costs": {
-    "entryFeeBps": 10,
-    "entrySlippageBps": 5
+    "provider": "Frankfurter public FX rates",
+    "fallbackUsdJpy": 155
   },
   "assets": [
-    {
-      "symbol": "BTCUSDT",
-      "label": "Bitcoin",
-      "allocationPct": 0.34
-    },
-    {
-      "symbol": "ETHUSDT",
-      "label": "Ethereum",
-      "allocationPct": 0.33
-    },
-    {
-      "symbol": "SOLUSDT",
-      "label": "Solana",
-      "allocationPct": 0.33
-    }
-  ]
+    { "symbol": "BTCUSDT", "label": "Bitcoin", "allocationPct": 34 },
+    { "symbol": "ETHUSDT", "label": "Ethereum", "allocationPct": 33 },
+    { "symbol": "SOLUSDT", "label": "Solana", "allocationPct": 33 }
+  ],
+  "costs": {
+    "entryFeeBps": 10,
+    "entrySlippageBps": 8
+  },
+  "automation": {
+    "dryRun": true,
+    "liveTradingEnabled": false,
+    "scheduleLabel": "Every day 09:30 JST",
+    "cronUtc": "30 0 * * *"
+  }
 }
