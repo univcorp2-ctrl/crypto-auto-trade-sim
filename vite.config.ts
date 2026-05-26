@@ -1,13 +1,1 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-const repoBasePath = '/crypto-auto-trade-sim/';
-
-export default defineConfig({
-  base: process.env.VITE_BASE_PATH || repoBasePath,
-  plugins: [react()],
-  test: {
-    environment: 'jsdom',
-    globals: true
-  }
-});
+import { defineConfig } from 'vitest/config'; import react from '@vitejs/plugin-react'; const repoBasePath = '/crypto-auto-trade-sim/'; export default defineConfig({ base: process.env.VITE_BASE_PATH || repoBasePath, plugins: [react()], test: { environment: 'jsdom', globals: true } });
