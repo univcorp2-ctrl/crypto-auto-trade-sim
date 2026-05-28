@@ -6,17 +6,11 @@
 https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/
 ```
 
-BTC / ETH / SOL の仮想ポートフォリオを表示するGitHub Pages Webアプリです。`scripts/build-static-site.mjs` が `dist/index.html` を生成し、GitHub Pagesへデプロイします。
-
-## Run
+GitHub Pagesを確実に通すため、現在は `scripts/build-static-site.mjs` が依存なしで `dist/index.html` を生成する最小Webダッシュボード構成です。
 
 ```bash
 npm install
 npm run generate:dashboard
+npm test
 npm run build
-npm run dev
 ```
-
-## Deploy
-
-`.github/workflows/pages-dashboard.yml` が `main` push、手動実行、毎日09:30 JSTでGitHub Pagesにデプロイします。
