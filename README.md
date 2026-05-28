@@ -6,22 +6,15 @@
 https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/
 ```
 
-BTC / ETH / SOL の仮想ポートフォリオを表示するGitHub Pages Webアプリです。発注は行わず、ドライランの評価額、損益、リターン、最大ドローダウン、リスクスコア、売買シグナルを表示します。
+BTC / ETH / SOL の仮想ポートフォリオを表示するGitHub Pages Webアプリです。`scripts/build-static-site.mjs` が `dist/index.html` を生成し、GitHub Pagesへデプロイします。
 
 ## Run
 
 ```bash
 npm install
 npm run generate:dashboard
-npm run dev
-```
-
-## Build / Test
-
-```bash
-npm run lint
-npm test
 npm run build
+npm run dev
 ```
 
 ## Deploy
