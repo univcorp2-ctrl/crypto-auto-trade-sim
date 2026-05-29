@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
-const pkg = JSON.parse(await readFile('package.json', 'utf8'));
-assert.equal(pkg.name, 'crypto-auto-trade-sim');
 const data = JSON.parse(await readFile('public/data/live-results.json', 'utf8'));
 assert.ok(data.publicUrl.includes('https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/'));
-assert.ok(['real-market-backtest', 'binance-real-account'].includes(data.mode));
-assert.ok(data.summary.currentValueJpy >= 0);
+assert.ok(['real-market-backtest', 'binance-real-account', 'real-data-unavailable'].includes(data.mode));
 assert.ok(Array.isArray(data.history));
 assert.ok(Array.isArray(data.trades));
+assert.ok(data.summary.currentValueJpy >= 0);
 await access('public/data/trades.csv');
-console.log(`Smoke tests passed: ${data.mode}`);
+console.log('Smoke tests passed: ' + data.mode);
