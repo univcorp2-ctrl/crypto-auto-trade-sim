@@ -1,0 +1,1 @@
+{"strategyId":"WAIWAI_AUTO_V1","strategyName":"ワイワイ自動売買","symbols":["BTCUSDT","ETHUSDT","SOLUSDT"],"startCapitalJpy":1000000,"historyDays":180,"feeRate":0.001,"momentumLookbackDays":7,"movingAverageDays":20,"rebalance":"daily","baseCurrency":"USDT","displayCurrency":"JPY","risk":{"maxPositions":3,"cashWhenNoMomentum":true}}
