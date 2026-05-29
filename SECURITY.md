@@ -1,19 +1,7 @@
-# Security
+# Security Policy
 
-## Secrets
-
-- APIキーをフロントエンドへ埋め込まないでください。
-- `.env` はコミットしないでください。
-- 取引所APIキーは出金権限を無効化してください。
-- 可能ならIP制限を有効化してください。
-
-## Live trading safety
-
-- 本番発注前に必ず `DRY_RUN=true` で運用してください。
-- 1日損失、連敗、API失敗回数で強制停止してください。
-- すべての注文意図・発注結果・エラーを監査ログに保存してください。
-- ライブラリや取引所APIの仕様変更をCIや監視で検知してください。
-
-## Reporting
-
-このサンプルリポジトリに脆弱性を見つけた場合は、Issueではなく管理者へ直接連絡してください。
+- `BINANCE_API_KEY` と `BINANCE_API_SECRET` はGitHub Actions Secretsにのみ保存します。
+- Webフロントエンドや `public/data` にはAPIキーを出力しません。
+- Binance API keyには出金権限を付けないでください。
+- 可能であればIP制限を有効化してください。
+- 不審な挙動があればAPI keyを即時失効してください。
