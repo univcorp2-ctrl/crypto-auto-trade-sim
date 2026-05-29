@@ -1,1 +1,12 @@
-import assert from 'node:assert/strict'; import { readFile } from 'node:fs/promises'; const pkg = JSON.parse(await readFile('package.json', 'utf8')); const data = JSON.parse(await readFile('public/data/performance.json', 'utf8')); assert.equal(pkg.name, 'crypto-auto-trade-sim'); assert.ok(data.publicDashboardUrl.includes('https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/')); assert.ok(data.portfolio.currentValueJpy > 0); assert.ok(Array.isArray(data.portfolio.positions)); assert.ok(data.portfolio.positions.length >= 3); console.log('Smoke tests passed');
+import assert from 'node:assert/strict';
+import { access, readFile } from 'node:fs/promises';
+const pkg = JSON.parse(await readFile('package.json', 'utf8'));
+assert.equal(pkg.name, 'crypto-auto-trade-sim');
+const data = JSON.parse(await readFile('public/data/live-results.json', 'utf8'));
+assert.ok(data.publicUrl.includes('https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/'));
+assert.ok(['real-market-backtest', 'binance-real-account'].includes(data.mode));
+assert.ok(data.summary.currentValueJpy >= 0);
+assert.ok(Array.isArray(data.history));
+assert.ok(Array.isArray(data.trades));
+await access('public/data/trades.csv');
+console.log(`Smoke tests passed: ${data.mode}`);
