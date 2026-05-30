@@ -1,24 +1,25 @@
 # Architecture
 
-The production dashboard is built by `.github/workflows/production-pages.yml` and `scripts/prod-verified.mjs`.
+Current production entrypoint:
+
+```text
+.github/workflows/production-pages.yml -> node scripts/prod-final.mjs -> dist -> GitHub Pages
+```
 
 ```mermaid
 flowchart TD
-  A[Push or scheduled workflow] --> B[Node prod-verified.mjs]
+  A[Production Pages workflow] --> B[prod-final.mjs]
   B --> C[Coinbase Exchange daily candles]
-  B --> D[Frankfurter USD JPY rate]
-  C --> E[WAIWAI strategy calculation]
+  B --> D[Frankfurter USD JPY]
+  C --> E[WAIWAI market simulation]
   D --> E
-  E --> F[dist/data/live-results.json]
-  E --> G[dist/data/trades.csv and trades.xls]
-  E --> H[dist/index.html]
-  H --> I[GitHub Pages]
+  E --> F[dist/index.html]
+  E --> G[dist/data/live-results.json]
+  E --> H[dist/data/trades.csv]
+  E --> I[dist/data/trades.xls]
+  F --> J[GitHub Pages]
 ```
 
-## Data proof
+The public dashboard is real market simulation mode. It uses real market candles, but it is not a private exchange account statement unless private account credentials are integrated separately.
 
-The dashboard and JSON include `dataProvenance`. It shows source, product, candle row count, first date, last date, and last close for BTC, ETH, and SOL.
-
-## User controls
-
-The page supports chart range buttons, asset filter buttons, trade search, buy or sell filtering, raw JSON modal, URL copy, reload, and JSON CSV Excel downloads.
+The page includes user controls for chart range, asset filter, trade search, raw JSON, URL copy, reload, and data export.
