@@ -14,4 +14,4 @@ https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/data/trades.csv
 https://univcorp2-ctrl.github.io/crypto-auto-trade-sim/data/trades.xls
 ```
 
-This standalone deployment uses Coinbase Exchange public daily candles to calculate the WAIWAI auto-trade backtest result when no private exchange secrets are available.
+The dashboard now exposes data provenance in the UI and in `live-results.json`.
