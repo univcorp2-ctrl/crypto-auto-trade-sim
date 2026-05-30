@@ -1,0 +1,1 @@
+{"name":"Legacy Production Dashboard Disabled","on":{"workflow_dispatch":{}},"permissions":{"contents":"read"},"jobs":{"disabled":{"runs-on":"ubuntu-latest","steps":[{"name":"Disabled","run":"echo Legacy workflow disabled. Use production-pages.yml instead."}]}}}
