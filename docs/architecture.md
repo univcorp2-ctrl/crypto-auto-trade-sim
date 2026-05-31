@@ -3,25 +3,23 @@
 Current production entrypoint:
 
 ```text
-.github/workflows/production-pages.yml -> node scripts/prod-final.mjs -> dist -> GitHub Pages
+.github/workflows/production-pages.yml -> node scripts/prod-optimizer.mjs -> dist -> GitHub Pages
 ```
 
 ```mermaid
 flowchart TD
-  A[Production Pages workflow] --> B[prod-final.mjs]
+  A[Production Pages workflow] --> B[prod-optimizer.mjs]
   B --> C[Coinbase Exchange daily candles]
   B --> D[Frankfurter USD JPY]
-  C --> E[WAIWAI daily rebalance simulation]
+  C --> E[Generate strategy candidates]
   D --> E
-  E --> F[Today / month-to-date / cumulative performance]
-  E --> G[Historical BUY and SELL trades]
-  F --> H[dist/index.html]
-  G --> I[dist/data/live-results.json]
-  G --> J[dist/data/trades.csv]
-  G --> K[dist/data/trades.xls]
-  H --> L[GitHub Pages]
+  E --> F[Backtest WAIWAI candidates]
+  F --> G{Any positive candidate?}
+  G -->|Yes| H[Select highest score positive strategy]
+  G -->|No| I[Capital preservation fallback]
+  H --> J[Dashboard and data exports]
+  I --> J
+  J --> K[GitHub Pages]
 ```
 
-The public dashboard is real-market simulation mode. It uses real market candles, but it is not a private exchange account statement unless private account credentials are integrated separately.
-
-The page includes user controls for chart range, asset filter, buy/sell filter, trade search, raw JSON, URL copy, reload, and data export.
+The optimizer searches multiple lookback, moving-average, max-position, and rebalance-threshold settings. It selects a positive strategy when one exists in the tested real-market period. This is still a real-market simulation, not a private account statement.
